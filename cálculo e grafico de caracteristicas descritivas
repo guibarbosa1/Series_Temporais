@@ -1,0 +1,154 @@
+---
+title: "Homework 1"
+author: "Guilherme da Silva Barbosa - 811692"
+date: "06/2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+options(stringsAsFactors = FALSE)
+library(BatchGetSymbols)
+library(tidyverse)
+library(ggthemes)
+```
+
+## 1 - Variáveis escolhidas:
+
+```{r}
+rm(list = ls())
+
+tickers <- c('PETR4.SA', 'AZEV4.SA', 'EMBR3.SA', 'MGLU3.SA')
+
+dados_raw <- BatchGetSymbols(tickers = tickers,
+                             first.date = as.Date('2014-01-01'),
+                             last.date = Sys.Date(),
+                             freq.data = "daily",
+                             type.return = "log",
+                             cache.folder = tempdir())
+
+# Seleciona apenas os dados de preços
+dados <- dados_raw$df.tickers
+```
+
+## Gráfico de Preço de Fechamento
+
+```{r grafico_precos, echo=FALSE}
+ggplot(dados, aes(x = ref.date, y = price.close, color = ticker)) +
+  geom_line(size = 0.8) +
+  labs(title = "Preço de Fechamento dos Ativos", x = "Data", y = "Preço (R$)") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+```
+
+## Cálculo dos Retornos Logarítmicos
+
+```{r}
+retornos <- dados %>%
+  group_by(ticker) %>%
+  arrange(ref.date) %>%
+  mutate(retorno = log(price.close / lag(price.close))) %>%
+  na.omit()
+```
+
+## Gráfico dos Retornos Logarítmicos
+
+```{r grafico_retornos, echo=FALSE}
+ggplot(retornos, aes(x = ref.date, y = retorno, color = ticker)) +
+  geom_line(size = 0.6) +
+  labs(title = "Retornos Logarítmicos Diários", x = "Data", y = "Retorno") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+```
+
+## Histogramas dos Retornos
+
+```{r histogramas_retornos, echo=FALSE}
+ggplot(retornos, aes(x = retorno, fill = ticker)) +
+  geom_histogram(bins = 60, alpha = 0.6, position = "identity") +
+  facet_wrap(~ticker, scales = "free") +
+  labs(title = "Distribuição dos Retornos", x = "Retorno", y = "Frequência") +
+  theme_minimal()
+```
+
+
+
+## 2 - Cálculo das estatísticas descritivas:
+
+```{r estatisticas}
+retornos %>%
+  group_by(ticker) %>%
+  summarise(
+    media = mean(retorno),
+    desvio = sd(retorno),
+    variancia = var(retorno),
+    maximo = max(retorno),
+    minimo = min(retorno),
+    obs = n()
+  )
+```
+
+
+## 3 - Cálculo e criação das características de correlação:
+
+```{r correlacao, echo=FALSE}
+# Constrói uma tabela de retornos em formato wide
+retornos_wide <- retornos %>%
+  select(ref.date, ticker, retorno) %>%
+  pivot_wider(names_from = ticker, values_from = retorno)
+
+# Remove a coluna de datas para calcular correlação
+matriz_cor <- cor(retornos_wide[-1], use = "complete.obs")
+
+# Visualiza matriz de correlação
+matriz_cor
+```
+
+## Correlação entre os retornos
+```{r qqplot_retornos, echo=FALSE}
+ggplot(retornos, aes(sample = retorno)) + 
+  stat_qq() + 
+  stat_qq_line() +
+  labs(x = "Teórico" , y = 'Amostra', title = "QQplot dos Retornos") +
+  theme_economist()
+```
+
+## Ativo com Maior Volatilidade
+
+```{r maior_volatilidade}
+volatilidade <- retornos %>%
+  group_by(ticker) %>%
+  summarise(desvio_padrao = sd(retorno)) %>%
+  arrange(desc(desvio_padrao))
+
+volatilidade
+```
+
+```{r grafico_volatilidade, echo=FALSE}
+ggplot(volatilidade, aes(x = reorder(ticker, desvio_padrao), y = desvio_padrao, fill = ticker)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Volatilidade dos Ativos (Desvio Padrão dos Retornos)",
+       x = "Ticker", y = "Desvio Padrão") +
+  theme_minimal()
+```
+
+## 4 - Criação do mapa de calor:
+
+```{r heatmap_correlacao, echo=FALSE}
+library(reshape2)
+
+# Reorganiza para heatmap
+cor_melt <- melt(matriz_cor)
+
+ggplot(cor_melt, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1, 1), space = "Lab",
+                       name = "Correlação") +
+  theme_minimal() +
+  labs(title = "Mapa de Calor da Correlação entre Retornos") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
