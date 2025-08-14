@@ -1,0 +1,177 @@
+---
+title: "Homework4_811692"
+author: "Guilherme da Silva Barbosa"
+date: "07/2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(quantmod)
+library(rugarch)
+library(tseries)
+library(ggplot2)
+library(knitr)
+library(dplyr)
+```
+
+# Questão 1: Modelo ARCH(1)
+
+## (a) Por que os parâmetros $ e \( \alpha \) são restritos a valores positivos ou não negativos?
+
+No modelo ARCH(1), a variância condicional é dada por:
+
+$$
+\sigma_t^2 = \omega + \alpha \varepsilon_{t-1}^2
+$$
+
+Onde:
+
+- \( \omega \) (denotado por $ no enunciado) é uma constante positiva;
+- \( \alpha \) é o coeficiente de impacto dos choques passados.
+
+**Justificativa:**
+
+- \( \omega > 0 \): garante variância positiva para todos os períodos.
+- \( \alpha \geq 0 \): impede que choques passados reduzam a variância.
+- Como \( \varepsilon^2 \geq 0 \), valores negativos de \( \alpha \) poderiam resultar em \( \sigma_t^2 < 0 \), o que é inviável estatisticamente.
+
+## (b) Como o modelo ARCH permite clusters de volatilidade?
+
+Quando um choque grande ocorre, \( \varepsilon^2 \) aumenta, levando a uma maior \( \sigma_t^2 \). Isso significa maior volatilidade esperada no próximo período. Se novos choques também forem grandes, a variância continua alta, gerando aglomeração de alta volatilidade (cluster). O mesmo ocorre para baixa volatilidade. Isso reflete um dos fatos estilizados das séries financeiras.
+
+## (c) Dois fatos estilizados que **não** são capturados:
+
+1. **Assimetria (efeito alavancagem):** Choques negativos impactam mais a volatilidade que positivos. ARCH é simétrico.
+2. **Caudas pesadas:** ARCH assume normalidade, não captando curtose excessiva observada em retornos reais.
+
+## (d) Diferença entre variância condicional e incondicional:
+
+- **Condicional:** depende da informação passada (\( \mathcal{I}_{t-1} \)). Varia com o tempo.
+- **Incondicional:** variância de longo prazo, constante, dada por:
+
+$$
+Var(r_t) = \frac{\omega}{1 - \alpha}, \text{ se } \alpha < 1
+$$
+
+---
+
+# Questão 2: FAC e FACP nos modelos ARCH
+
+- **FAC (Função Autocorrelação):** úteis para detectar autocorrelações nos **retornos**.
+- **FACP (FAC dos quadrados):** usadas para detectar autocorrelação nos **quadrados dos retornos**, indicando heterocedasticidade condicional.
+
+**Etapas do ajuste:**
+
+1. **Diagnóstico inicial:** Aplica-se FAC nos retornos e FACP nos retornos ao quadrado.
+2. **Escolha da ordem ARCH(q):** Com base na FACP.
+3. **Pós-ajuste:** Verifica-se se a FACP das sobras elevadas ao quadrado está nula, para validar o modelo.
+
+---
+
+# Questão 3: Ajuste de modelos ARCH(1,1)
+
+## (a) PETROBRAS - Log-retornos diários
+
+```{r petro}
+getSymbols("PETR4.SA", from = "2019-01-01", auto.assign = TRUE)
+preco_pet <- na.omit(Cl(PETR4.SA))
+ret_pet <- dailyReturn(preco_pet, type = "log")
+plot(ret_pet, main = "Log-retornos PETROBRAS")
+```
+
+### Ajuste ARCH(1,1) - Normal
+
+```{r arch_norm_pet}
+spec_norm <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+                        mean.model = list(armaOrder = c(0,0)),
+                        distribution.model = "norm")
+fit_norm_pet <- ugarchfit(spec_norm, ret_pet)
+fit_norm_pet
+```
+
+### Ajuste ARCH(1,1) - t-Student
+
+```{r arch_t_pet}
+spec_t <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+                     mean.model = list(armaOrder = c(0,0)),
+                     distribution.model = "std")
+fit_t_pet <- ugarchfit(spec_t, ret_pet)
+fit_t_pet
+```
+
+## (b) IBOVESPA - Log-retornos diários
+
+```{r ibov}
+getSymbols("^BVSP", from = "2019-01-01", auto.assign = TRUE)
+ret_ibov <- dailyReturn(Cl(BVSP), type = "log")
+plot(ret_ibov, main = "Log-retornos IBOVESPA")
+```
+
+### Ajuste ARCH(1,1) - Normal
+
+```{r arch_norm_ibov}
+fit_norm_ibov <- ugarchfit(spec_norm, ret_ibov)
+fit_norm_ibov
+```
+
+### Ajuste ARCH(1,1) - t-Student
+
+```{r arch_t_ibov}
+fit_t_ibov <- ugarchfit(spec_t, ret_ibov)
+fit_t_ibov
+```
+
+---
+
+# Questão 4: Coeficientes de persistência e half-life
+
+## PETROBRAS - Distribuição Normal
+
+```{r pers_pet_norm}
+coef_norm_pet <- coef(fit_norm_pet)
+persist_pet_norm <- coef_norm_pet["alpha1"] + coef_norm_pet["beta1"]
+half_life_pet_norm <- log(0.5) / log(persist_pet_norm)
+persist_pet_norm
+half_life_pet_norm
+```
+
+## PETROBRAS - t-Student
+
+```{r pers_pet_t}
+coef_t_pet <- coef(fit_t_pet)
+persist_pet_t <- coef_t_pet["alpha1"] + coef_t_pet["beta1"]
+half_life_pet_t <- log(0.5) / log(persist_pet_t)
+persist_pet_t
+half_life_pet_t
+```
+
+## IBOVESPA - Normal
+
+```{r pers_ibov_norm}
+coef_norm_ibov <- coef(fit_norm_ibov)
+persist_ibov_norm <- coef_norm_ibov["alpha1"] + coef_norm_ibov["beta1"]
+half_life_ibov_norm <- log(0.5) / log(persist_ibov_norm)
+persist_ibov_norm
+half_life_ibov_norm
+```
+
+## IBOVESPA - t-Student
+
+```{r pers_ibov_t}
+coef_t_ibov <- coef(fit_t_ibov)
+persist_ibov_t <- coef_t_ibov["alpha1"] + coef_t_ibov["beta1"]
+half_life_ibov_t <- log(0.5) / log(persist_ibov_t)
+persist_ibov_t
+half_life_ibov_t
+```
+
+### Interpretação:
+
+- O **coeficiente de persistência** indica o quanto choques anteriores influenciam a volatilidade atual. Valores próximos de 1 indicam forte memória.
+- O **half-life** indica quantos dias em média leva para o efeito de um choque se reduzir pela metade. Quanto maior, mais persistente a volatilidade.
+
+---
+
