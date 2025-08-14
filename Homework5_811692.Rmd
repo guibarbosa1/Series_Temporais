@@ -1,0 +1,154 @@
+---
+title: "Homework5_811692"
+author: "Guilherme da Silva Barbosa"
+date: "07/20256"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(quantmod)
+library(rugarch)
+library(PerformanceAnalytics)
+library(tseries)
+library(xts)
+library(forecast)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+```
+
+# Introdução
+
+Neste relatório, faremos a modelagem da volatilidade condicional das ações da VALE usando abordagens ARMA-GARCH. Ajustaremos os modelos **GARCH(1,1)**, **EGARCH(1,1)** e **GJR(1,1)** sob distribuições **Normal** e **t-Student**, conforme sugerido no roteiro. Será realizada comparação entre os modelos com base em informações como AIC, BIC e análise dos resíduos. Por fim, serão geradas previsões de volatilidade condicional.
+
+Além da implementação prática, este relatório também traz explicações conceituais e justificativas teóricas para enriquecer a análise.
+
+---
+
+# Coleta e tratamento dos dados da VALE
+
+```{r coleta}
+getSymbols("VALE3.SA", from = "2019-01-01")
+preco <- Cl(VALE3.SA)
+retornos <- na.omit(dailyReturn(preco, type = 'log'))
+plot(retornos, main = "Log-retornos diários da VALE", col = "darkblue")
+```
+
+---
+
+# Análise exploratória
+
+```{r exp}
+summary(retornos)
+acf(retornos, main = "FAC - Retornos")
+acf(retornos^2, main = "FACP - Retornos ao quadrado")
+```
+
+> A análise da FAC mostra ausência de autocorrelação significativa nos retornos, mas a FACP sugere dependência temporal nos quadrados dos retornos, indicando heterocedasticidade condicional — ideal para modelos da família GARCH.
+
+---
+
+# Especificação dos modelos
+
+```{r spec_models}
+criar_modelo <- function(tipo, dist) {
+  ugarchspec(
+    variance.model = list(model = tipo, garchOrder = c(1,1)),
+    mean.model = list(armaOrder = c(1,1), include.mean = TRUE),
+    distribution.model = dist
+  )
+}
+```
+
+---
+
+# Ajuste dos modelos
+
+```{r ajuste}
+tipos <- c("sGARCH", "eGARCH", "gjrGARCH")
+dists <- c("norm", "std")
+resultados <- list()
+melhor_nome <- NULL
+
+for (t in tipos) {
+  for (d in dists) {
+    spec <- criar_modelo(t, d)
+    fit <- tryCatch(ugarchfit(spec = spec, data = retornos), error = function(e) NULL)
+    nome <- paste(t, d, sep = "_")
+    if (!is.null(fit) && inherits(fit, "ugarchfit")) {
+      resultados[[nome]] <- fit
+    }
+  }
+}
+```
+
+---
+
+# Comparando os modelos (AIC, BIC, Resíduos)
+
+```{r comparacao}
+criterios <- data.frame(Modelo=character(), AIC=double(), BIC=double())
+
+for (nome in names(resultados)) {
+  fit <- resultados[[nome]]
+  ic <- tryCatch(infocriteria(fit), error = function(e) return(NULL))
+  if (!is.null(ic)) {
+    criterios <- rbind(criterios,
+                       data.frame(Modelo=nome,
+                                  AIC=ic["Akaike"],
+                                  BIC=ic["Bayes"]))
+  }
+}
+
+if (nrow(criterios) == 0) {
+  print("Atenção: Nenhum modelo convergiu. Veja os dados ou tente outro intervalo.")
+} else {
+  melhor_nome <<- criterios$Modelo[which.min(criterios$AIC)]
+  cat("\n\n**Melhor modelo segundo o AIC:**", melhor_nome, "\n\n")
+  kable(criterios[order(criterios$AIC), ], caption = "Comparativo de AIC e BIC")
+}
+```
+
+---
+
+# Diagnóstico dos resíduos
+
+```{r residuos}
+if (!is.null(melhor_nome)) {
+  best_model <- resultados[[melhor_nome]]
+
+  par(mfrow=c(2,2))
+  plot(residuals(best_model), main="Resíduos")
+  acf(residuals(best_model), main="FAC dos resíduos")
+  acf(residuals(best_model)^2, main="FACP dos resíduos")
+  qqnorm(residuals(best_model))
+  qqline(residuals(best_model))
+}
+```
+
+> Espera-se que os resíduos não apresentem autocorrelação significativa nem estrutura em seus quadrados. Isso indicaria que o modelo capturou adequadamente a dinâmica da volatilidade. O QQ-plot ajuda a verificar se a distribuição dos resíduos se aproxima da teórica.
+
+---
+
+# Previsões de Volatilidade Condicional
+
+```{r previsao}
+if (!is.null(melhor_nome)) {
+  forecast <- ugarchforecast(best_model, n.ahead = 10)
+  volat <- sigma(forecast)
+  plot(volat, type = 'l', col = 'red', lwd = 2, main = paste("Previsão da Volatilidade Condicional (10 dias)\nModelo:", melhor_nome), ylab = "Volatilidade")
+}
+```
+
+> A série prevista da volatilidade condicional, gerada a partir do modelo `r melhor_nome`, permite antecipar períodos de maior ou menor risco nos retornos da ação da VALE. Isso é crucial para estratégias de hedge, precificação de opções e controle de risco.
+
+---
+
+# Conclusão
+
+Neste relatório, ajustamos três modelos de volatilidade para os log-retornos da VALE: GARCH, EGARCH e GJR-GARCH, cada um sob duas distribuições. Não consegui identificar um melhor modelo que se adequa-se em todas às requisições, isso porque não houve convergência nos intervalos de tempo selecionados.
+
+---
