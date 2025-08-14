@@ -1,0 +1,143 @@
+---
+title: "Análise ARMA do Índice Ibovespa e Ações do S&P500"
+author: "Guilherme da Silva Barbosa"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(tseries)
+library(forecast)
+library(dplyr)
+library(BatchGetSymbols)
+library(gridExtra)
+```
+
+## 1. Análise do Índice Ibovespa
+
+### Importação e visualização da série
+
+```{r}
+library(quantmod)
+ibov <- getSymbols('^BVSP', src = 'yahoo', from = '2021-01-01', auto.assign = FALSE)[,6]
+ts_ibov <- ts(na.omit(diff(log(ibov))), frequency = 252)
+plot(ts_ibov, main="Retornos Diários do Ibovespa", col="blue")
+```
+
+### Fatos estilizados
+
+- Presença de volatilidade agrupada.
+- Série estacionária com média próxima de zero.
+
+### FAC e FACP
+
+```{r}
+acf(ts_ibov, main="FAC - Retornos do Ibovespa")
+pacf(ts_ibov, main="FACP - Retornos do Ibovespa")
+```
+
+### Estimação do Modelo ARIMA
+
+```{r}
+modelo_ibov <- auto.arima(ts_ibov)
+summary(modelo_ibov)
+```
+
+```{r}
+table_modelo <- data.frame(AIC = AIC(modelo_ibov), BIC = BIC(modelo_ibov))
+table_modelo
+```
+
+### Diagnóstico dos Resíduos
+
+```{r}
+checkresiduals(modelo_ibov)
+```
+
+### Gráfico valores ajustados vs observados
+
+```{r}
+plot(ts_ibov, col="red", main="Valores Observados e Ajustados")
+lines(fitted(modelo_ibov), col="blue")
+```
+
+## 2. Previsão de 5 Períodos
+
+```{r}
+prev_ibov <- forecast(modelo_ibov, h=5)
+plot(prev_ibov)
+```
+
+## 3. Modelagem ARMA para o S&P500
+
+```{r}
+library(BatchGetSymbols)
+library(dplyr)
+library(forecast)
+library(purrr)
+
+# Obter tickers do SP500 (limitado a alguns para evitar travamento)
+sp500_stocks <- GetSP500Stocks()
+tickers_sp <- sp500_stocks$tickers[1:20]
+
+# Baixar os dados
+start_date <- Sys.Date() - 365*2
+end_date <- Sys.Date()
+
+dados_raw <- BatchGetSymbols(tickers = tickers_sp,
+                             first.date = start_date,
+                             last.date = end_date,
+                             freq.data = 'daily',
+                             type.return = 'log')
+
+dados_sp <- dados_raw$df.tickers
+
+# Remover ativos sem retornos válidos
+dados_validos <- dados_sp %>%
+  filter(!is.na(ret.closing.prices)) %>%
+  group_by(ticker) %>%
+  filter(n() >= 30) %>%   # no mínimo 30 observações
+  ungroup()
+
+# Modelar cada série individualmente e calcular previsão t+1
+arma_forecasts <- dados_validos %>%
+  group_by(ticker) %>%
+  summarise(previsao_t1 = tryCatch({
+    ts_data <- ts(ret.closing.prices)
+    fit <- auto.arima(ts_data)
+    forecast(fit, h = 1)$mean[1]
+  }, error = function(e) NA)) %>%
+  arrange(desc(previsao_t1))
+
+arma_forecasts
+```
+
+## 4. Estratégia de Negociação
+
+```{r}
+df_strat <- sp500$df.tickers %>%
+  group_by(ticker) %>%
+  mutate(ret = diff(log(price.adjusted)), .keep = "unused") %>%
+  filter(!is.na(ret)) %>%
+  mutate(data = lubridate::as_date(ref.date)) %>%
+  group_by(ticker) %>%
+  group_modify(~{
+    corte <- floor(0.8 * nrow(.x))
+    treino <- .x[1:corte,]
+    teste <- .x[(corte+1):nrow(.x),]
+    m <- tryCatch(auto.arima(ts(treino$ret, frequency=252)), error = function(e) NULL)
+    if (is.null(m)) return(NULL)
+    forecast_ret <- forecast(m, h=nrow(teste))$mean
+    teste <- teste %>% mutate(previsao = as.numeric(forecast_ret))
+    teste <- teste %>% mutate(lucro = ifelse(previsao > 0, lead(ret), 0))
+    lucro_medio <- mean(teste$lucro, na.rm=TRUE)
+    data.frame(ticker = .x$ticker[1], lucro_medio)
+  }) %>% filter(!is.na(lucro_medio))
+
+head(df_strat %>% arrange(desc(lucro_medio)), 5)
+```
+
+### Conclusão:
+
+A estratégia baseada em previsões ARMA pode indicar sinais de negociação, mas o desempenho real depende de fatores como custos de transação, liquidez e estabilidade das previsões. Alguns ativos mostraram potencial de lucro com previsão positiva de retorno.
